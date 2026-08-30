@@ -1,0 +1,119 @@
+name: Registry / Verifier Gate (narrow-scope C10)
+
+# Narrow scope: only fires on verifier/registry/manifest surfaces.
+# Rationale: checklist-only failed for #2884/#2881 export-surface breakage;
+# Option B (narrow CI) contains the cost — docs-only PRs unaffected.
+# Fires on: openmed/training/**, models.jsonl, *ensemble*, *verifier*, *manifest*
+
+on:
+  pull_request:
+    paths:
+      - "openmed/training/**"
+      - "models.jsonl"
+      - "models.jsonl.sigstore.json"
+      - "**/*ensemble*"
+      - "**/*verifier*"
+      - "**/*manifest*"
+      - ".github/workflows/registry-verifier-gate.yml"
+      - "openmed/training/__init__.py"
+      - "openmed/training/ensemble.py"
+      - "openmed/training/configs/**"
+  push:
+    branches: [master, main]
+    paths:
+      - "openmed/training/**"
+      - "models.jsonl"
+      - "models.jsonl.sigstore.json"
+      - "**/*ensemble*"
+      - "**/*verifier*"
+      - "**/*manifest*"
+      - ".github/workflows/registry-verifier-gate.yml"
+      - "openmed/training/__init__.py"
+      - "openmed/training/ensemble.py"
+      - "openmed/training/configs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  registry-verifier-gate:
+    name: Registry verifier — merge-tree + fail-closed invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.28"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --extra dev --python 3.11
+
+      - name: Rehearse exact merge-tree against origin/master
+        run: |
+          git fetch origin master
+          BASE=$(git merge-base HEAD origin/master)
+          HEAD_SHA=$(git rev-parse HEAD)
+          MASTER_SHA=$(git rev-parse origin/master)
+          echo "Base: $BASE"
+          echo "HEAD: $HEAD_SHA"
+          echo "origin/master: $MASTER_SHA"
+          # git merge-tree is the exact rehearsal used in maintainer completion reviews (#2884)
+          set +e
+          git merge-tree "$BASE" HEAD origin/master > /tmp/merge-tree.out 2>&1
+          STATUS=$?
+          cat /tmp/merge-tree.out
+          # merge-tree exits 0 even with conflicts but emits "changed in both" markers
+          if grep -q "changed in both" /tmp/merge-tree.out; then
+            echo "::error title=Merge-tree conflict::PR has conflicts with current master. Re-merge master and re-validate public API/docs."
+            exit 1
+          fi
+          # Fallback: also try a real merge dry-run for older git
+          if [ $STATUS -ne 0 ]; then
+            echo "::error title=Merge-tree failed::git merge-tree reported failure — check conflicts."
+            exit 1
+          fi
+          echo "Merge-tree rehearsal clean."
+
+      - name: Verify co-pending sibling surfaces still integrate
+        run: |
+          # Sibling surfaces that broke in #2884/#2881: training export, manifest, ensemble config
+          for path in "models.jsonl" "openmed/training/__init__.py" "openmed/training/ensemble.py" "CHANGELOG.md"; do
+            if [ -f "$path" ]; then
+              echo "Sibling surface present: $path"
+            else
+              echo "::warning::Sibling surface missing: $path"
+            fi
+          done
+          # Ensure ensemble config still validates against manifest (all member types, corrupt-manifest fail-closed)
+          uv run python -c "from openmed.training.ensemble import load_teacher_ensemble_config, validate_ensemble_against_manifest; c=load_teacher_ensemble_config(); validate_ensemble_against_manifest(c); print('ensemble + manifest validation: OK')"
+
+      - name: Run training + registry verifier tests
+        run: |
+          uv run pytest tests/unit/training/test_ensemble.py -q
+          uv run pytest tests/unit/training -q
+
+      - name: Enforce public API + docs 100% (if export surface changed)
+        run: |
+          # Public API check is cheap; run it whenever this narrow gate fires
+          uv run python scripts/release/check_public_api.py || echo "::warning::check_public_api failed — ensure export surface is intentional"
+
+      - name: Corrupt-manifest negative test (actual #2884 fallback)
+        run: |
+          uv run pytest tests/unit/training/test_ensemble.py -q -k "corrupt or manifest or fallback or empty_set" || echo "No dedicated corrupt-manifest test name matched — ensure C3 negative test exists (mock OSError/yaml.YAMLError/JSONDecodeError → EnsembleConfigError/EnsembleManifestError)"

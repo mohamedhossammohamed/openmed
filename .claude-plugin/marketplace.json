@@ -27,6 +27,7 @@
         "./skills/benchmark-pii-recall",
         "./skills/benchmarking-clinical-ner",
         "./skills/bridging-presidio-and-spacy",
+        "./skills/building-a-registry-verifier",
         "./skills/building-gold-corpus",
         "./skills/building-patient-timelines",
         "./skills/building-with-openmed",

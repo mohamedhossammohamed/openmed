@@ -75,6 +75,7 @@
         "authoring-model-cards",
         "benchmark-pii-recall",
         "benchmarking-clinical-ner",
+        "building-a-registry-verifier",
         "building-gold-corpus",
         "evaluating-with-leakage-gates",
         "gating-deid-leakage",

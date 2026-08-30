@@ -124,6 +124,9 @@ print(len(fixtures), "fixtures;", sum(len(f.gold_spans) for f in fixtures), "spa
   `group` tag in span `metadata`; don't store real protected attributes.
 - **Decision log is the gold's source of truth.** Without it, two re-annotations
   disagree and your "ceiling" F1 is noise.
+- **Hard negatives must fail the full pipeline.** Before finalizing a hard-negative string, run it through every production matcher/validator in that pipeline (not only the target label) and confirm zero matches. A value that fails one shape but passes an adjacent one (e.g., JP My Number vs JP phone) is not a hard negative.
+- **Prove mask integrity.** Reconstruct the expected masked output from `gold_spans` and assert hard negatives produce no spans across any label and that negative/positive spans are disjoint.
+- **Respect the runtime locale registry.** Use the registered Faker/provider locale from `openmed` for that language (e.g., Telugu → `en_IN` per the surrogate map), not the linguistically obvious `te_IN`. Freeze the gold baseline (OM-120 or your pinned set) as an explicit file; do not let it silently expand with `SUPPORTED_LANGUAGES`.
 
 ## Standards & references
 
